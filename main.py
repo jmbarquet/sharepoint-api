@@ -16,6 +16,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+from fastapi import Response
+import os
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+@app.get("/diag/config")
+def diag_config():
+    # show lengths only (no secret values)
+    t = os.getenv("AZURE_TENANT_ID") or ""
+    c = os.getenv("AZURE_CLIENT_ID") or ""
+    s = os.getenv("AZURE_CLIENT_SECRET") or ""
+    return {
+        "tenant_id_len": len(t),
+        "client_id_len": len(c),
+        "client_secret_len": len(s)
+    }
 
 # --------- Secrets from Azure App Service -> Configuration ----------
 TENANT = os.environ["AZURE_TENANT_ID"]
