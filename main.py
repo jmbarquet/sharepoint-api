@@ -6,6 +6,13 @@ import requests
 import msal
 import pandas as pd
 from unidecode import unidecode
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # or set your Bubble domain only
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 TENANT = os.environ["AZURE_TENANT_ID"]
 CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
