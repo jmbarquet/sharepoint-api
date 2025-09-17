@@ -321,3 +321,50 @@ def diag_drives(site_url: str):
     token = get_access_token()
     sid = get_site_id(site_url, token)
     return list_site_drives(sid, token)
+
+from urllib.parse import unquote
+
+@app.get("/diag/list")
+def diag_list(site_url: str, path: str = ""):
+    token = get_access_token()
+    sid = get_site_id(site_url, token)
+
+    # Order drives: default first, then others
+    default_drive_id = get_default_drive_id(sid, token)
+    drives = list_site_drives(sid, token)
+    ordered, seen = [], set()
+    for d in drives:
+        if d["id"] == default_drive_id and d["id"] not in seen:
+            ordered.append(d); seen.add(d["id"])
+    for d in drives:
+        if d["id"] not in seen:
+            ordered.append(d); seen.add(d["id"])
+
+    # normalize incoming path (handles %20 etc.)
+    path = unquote(path).replace("\\", "/").strip()
+
+    # try to list the given path in each drive
+    tried = []
+    for d in ordered:
+        candidates = [path]
+        # if caller accidentally prefixed with the drive name, also try without it
+        dn = (d.get("name") or "").strip()
+        if path.lower().startswith(dn.lower()+"/"):
+            candidates.append(path[len(dn)+1:])
+
+        for rel in dict.fromkeys(candidates):  # dedupe, keep order
+            try:
+                if rel:
+                    item = get_item_by_path_in_drive(sid, d["id"], rel, token)
+                else:
+                    item = gget(f"https://graph.microsoft.com/v1.0/sites/{sid}/drives/{d['id']}/root", token).json()
+                kids = list_children_in_drive(sid, d["id"], item["id"], token)
+                return {
+                    "driveName": d.get("name"),
+                    "path_used": rel,
+                    "children": [k["name"] for k in kids]
+                }
+            except HTTPException as e:
+                tried.append({"drive": d.get("name"), "path": rel, "err": e.detail})
+    return {"not_found": True, "tried": tried}
+
