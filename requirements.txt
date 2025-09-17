@@ -4,4 +4,5 @@ msal
 requests
 pandas
 openpyxl
+python-multipart
 unidecode
