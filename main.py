@@ -1,6 +1,7 @@
 import os, io, re
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, quote, unquote
+from urllib.parse import unquote, quote
 
 import requests
 import pandas as pd
@@ -97,11 +98,15 @@ def list_site_drives(site_id: str, token: str):
         token
     ).json().get("value", [])
 
+
 def get_item_by_path_in_drive(site_id: str, drive_id: str, rel_path: str, token: str):
-    # auto-decode & normalize
+    # decode and normalize
     rel_path = unquote(rel_path).replace("\\", "/").strip()
     enc = quote(rel_path).replace("%2F", "/")
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root:/{enc}"
+    # OLD (flaky for some tenants):
+    # url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root:/{enc}"
+    # NEW (reliable):
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{enc}"
     return gget(url, token).json()
 
 def list_children_in_drive(site_id: str, drive_id: str, item_id: str, token: str):
