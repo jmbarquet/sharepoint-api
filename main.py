@@ -1,7 +1,7 @@
 import os, io, re
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, quote
-
+from urllib.parse import unquote
 import requests
 import pandas as pd
 from unidecode import unidecode
@@ -88,7 +88,9 @@ def list_site_drives(site_id: str, token: str):
     return gget(f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives?$select=id,name,webUrl", token).json().get("value", [])
 
 def get_item_by_path_in_drive(site_id: str, drive_id: str, rel_path: str, token: str):
-    enc = quote(rel_path.strip()).replace("%2F", "/")
+    # NEW: decode and normalize the incoming path
+    rel_path = unquote(rel_path).replace("\\", "/").strip()
+    enc = quote(rel_path).replace("%2F", "/")
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root:/{enc}"
     return gget(url, token).json()
 
@@ -322,8 +324,6 @@ def diag_drives(site_url: str):
     sid = get_site_id(site_url, token)
     return list_site_drives(sid, token)
 
-from urllib.parse import unquote
-
 @app.get("/diag/list")
 def diag_list(site_url: str, path: str = ""):
     token = get_access_token()
@@ -341,23 +341,30 @@ def diag_list(site_url: str, path: str = ""):
             ordered.append(d); seen.add(d["id"])
 
     # normalize incoming path (handles %20 etc.)
+    from urllib.parse import unquote
     path = unquote(path).replace("\\", "/").strip()
 
-    # try to list the given path in each drive
     tried = []
     for d in ordered:
-        candidates = [path]
-        # if caller accidentally prefixed with the drive name, also try without it
+        # If no path provided: list drive root directly (no site prefix here)
+        if path == "":
+            r = gget(f"https://graph.microsoft.com/v1.0/drives/{d['id']}/root/children?$select=name,id,file", token).json()
+            kids = r.get("value", [])
+            return {
+                "driveName": d.get("name"),
+                "path_used": "",
+                "children": [k["name"] for k in kids]
+            }
+
+        # Try as given; if user accidentally prefixed with drive name, also try without it
         dn = (d.get("name") or "").strip()
-        if path.lower().startswith(dn.lower()+"/"):
+        candidates = [path]
+        if path.lower().startswith(dn.lower() + "/"):
             candidates.append(path[len(dn)+1:])
 
         for rel in dict.fromkeys(candidates):  # dedupe, keep order
             try:
-                if rel:
-                    item = get_item_by_path_in_drive(sid, d["id"], rel, token)
-                else:
-                    item = gget(f"https://graph.microsoft.com/v1.0/sites/{sid}/drives/{d['id']}/root", token).json()
+                item = get_item_by_path_in_drive(sid, d["id"], rel, token)
                 kids = list_children_in_drive(sid, d["id"], item["id"], token)
                 return {
                     "driveName": d.get("name"),
@@ -366,5 +373,6 @@ def diag_list(site_url: str, path: str = ""):
                 }
             except HTTPException as e:
                 tried.append({"drive": d.get("name"), "path": rel, "err": e.detail})
+
     return {"not_found": True, "tried": tried}
 
