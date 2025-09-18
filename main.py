@@ -2,6 +2,7 @@ import os, io, re
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse, quote, unquote
 from urllib.parse import unquote
+from urllib.parse import unquote, quote
 import requests
 import pandas as pd
 from unidecode import unidecode
@@ -390,3 +391,74 @@ def diag_list(site_url: str, path: str = "", drive: Optional[str] = None):
                 tried.append({"drive": d.get("name"), "path": rel, "err": e.detail})
 
     return {"not_found": True, "tried": tried}
+
+
+@app.get("/diag/drive-root")
+def diag_drive_root(drive_id: str):
+    token = get_access_token()
+    # List the root children of a specific library (drive) by ID
+    r = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/children?$select=name,id,file,folder",
+             token).json()
+    return {"drive_id": drive_id, "children": [x["name"] for x in r.get("value", [])]}
+
+@app.get("/diag/path")
+def diag_path(drive_id: str, path: str = ""):
+    token = get_access_token()
+    # decode and normalize
+    path = unquote(path).replace("\\", "/").strip()
+    tried = []
+
+    # If no path -> root
+    if path == "":
+        r = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/children?$select=name,id,file,folder",
+                 token).json()
+        return {"drive_id": drive_id, "path_used": "", "children": [x["name"] for x in r.get("value", [])]}
+
+    # Try direct path first
+    try:
+        enc = quote(path).replace("%2F", "/")
+        item = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{enc}", token).json()
+        kids = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item['id']}/children?$select=name,id,file,folder",
+                    token).json().get("value", [])
+        return {"drive_id": drive_id, "path_used": path, "children": [x["name"] for x in kids]}
+    except HTTPException as e:
+        tried.append({"path": path, "err": e.detail})
+
+    # Fallback: walk segment-by-segment (handles smart dashes, double spaces)
+    def normalize_name(s: str) -> str:
+        s = unidecode(s or "")
+        s = s.replace("–", "-").replace("—", "-")
+        s = re.sub(r"\s+", " ", s)
+        return s.strip().lower()
+
+    def find_child(children, target):
+        t = normalize_name(target)
+        for c in children:
+            if normalize_name(c.get("name","")) == t:
+                return c
+        return None
+
+    # start at root
+    root = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root", token).json()
+    current = root
+    parts = [p for p in path.split("/") if p]
+    for part in parts:
+        kids = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{current['id']}/children?$select=name,id,file,folder",
+                    token).json().get("value", [])
+        hit = find_child(kids, part)
+        if not hit:
+            return {"not_found": True, "drive_id": drive_id, "tried": tried + [{"walk_segment": part, "kids": [k["name"] for k in kids]}]}
+        current = hit
+
+    kids = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{current['id']}/children?$select=name,id,file,folder",
+                token).json().get("value", [])
+    return {"drive_id": drive_id, "path_used": path, "children": [x["name"] for x in kids]}
+
+@app.get("/diag/search")
+def diag_search(drive_id: str, q: str):
+    token = get_access_token()
+    # Search anything in this library; useful to discover exact paths
+    j = gget(f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/search(q='{q}')?$select=name,id,webUrl,parentReference",
+             token).json()
+    return j.get("value", [])
+
