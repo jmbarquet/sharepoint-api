@@ -345,18 +345,27 @@ def diag_list(site_url: str, path: str = ""):
     path = unquote(path).replace("\\", "/").strip()
 
     tried = []
-    for d in ordered:
-        # If no path provided: list drive root directly (no site prefix here)
-        if path == "":
-            r = gget(f"https://graph.microsoft.com/v1.0/drives/{d['id']}/root/children?$select=name,id,file", token).json()
-            kids = r.get("value", [])
-            return {
-                "driveName": d.get("name"),
-                "path_used": "",
-                "children": [k["name"] for k in kids]
-            }
 
-        # Try as given; if user accidentally prefixed with drive name, also try without it
+    # If NO path: try the root of EACH drive until one works
+    if path == "":
+        for d in ordered:
+            try:
+                r = gget(
+                    f"https://graph.microsoft.com/v1.0/drives/{d['id']}/root/children?$select=name,id,file",
+                    token
+                ).json()
+                kids = r.get("value", [])
+                return {
+                    "driveName": d.get("name"),
+                    "path_used": "",
+                    "children": [k["name"] for k in kids]
+                }
+            except HTTPException as e:
+                tried.append({"drive": d.get("name"), "path": "", "err": e.detail})
+        return {"not_found": True, "tried": tried}
+
+    # If a path IS provided: try as-is, and (if prefixed with drive name) also without it
+    for d in ordered:
         dn = (d.get("name") or "").strip()
         candidates = [path]
         if path.lower().startswith(dn.lower() + "/"):
