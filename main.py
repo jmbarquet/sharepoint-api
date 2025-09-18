@@ -110,8 +110,11 @@ def get_item_by_path_in_drive(site_id: str, drive_id: str, rel_path: str, token:
     return gget(url, token).json()
 
 def list_children_in_drive(site_id: str, drive_id: str, item_id: str, token: str):
-    # include folder/file + parentReference
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{item_id}/children?$select=id,name,file,folder,parentReference"
+    # Use the drive-scoped endpoint (more reliable in many tenants)
+    url = (
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}"
+        f"/items/{item_id}/children?$select=id,name,file,folder,parentReference"
+    )
     items = []
     while url:
         j = gget(url, token).json()
@@ -119,9 +122,11 @@ def list_children_in_drive(site_id: str, drive_id: str, item_id: str, token: str
         url = j.get("@odata.nextLink")
     return items
 
+
 def download_file_in_drive(site_id: str, drive_id: str, item_id: str, token: str) -> bytes:
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{item_id}/content"
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content"
     return gget(url, token).content
+
 
 def _startswith_ci(s: str, prefix: str) -> bool:
     return (s or "").lower().startswith((prefix or "").lower())
