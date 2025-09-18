@@ -1,12 +1,12 @@
 import os, io, re
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote
 from urllib.parse import unquote
 import requests
 import pandas as pd
 from unidecode import unidecode
 import msal
-
+from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -88,11 +88,12 @@ def list_site_drives(site_id: str, token: str):
     return gget(f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives?$select=id,name,webUrl", token).json().get("value", [])
 
 def get_item_by_path_in_drive(site_id: str, drive_id: str, rel_path: str, token: str):
-    # NEW: decode and normalize the incoming path
+    # decode %20 etc., normalize slashes
     rel_path = unquote(rel_path).replace("\\", "/").strip()
     enc = quote(rel_path).replace("%2F", "/")
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root:/{enc}"
     return gget(url, token).json()
+
 
 def list_children_in_drive(site_id: str, drive_id: str, item_id: str, token: str):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{item_id}/children?$select=id,name,file"
@@ -325,13 +326,22 @@ def diag_drives(site_url: str):
     return list_site_drives(sid, token)
 
 @app.get("/diag/list")
-def diag_list(site_url: str, path: str = ""):
+def diag_list(site_url: str, path: str = "", drive: Optional[str] = None):
     token = get_access_token()
     sid = get_site_id(site_url, token)
 
-    # Order drives: default first, then others
+    # Fetch drives (document libraries)
     default_drive_id = get_default_drive_id(sid, token)
     drives = list_site_drives(sid, token)
+
+    # If a specific drive is requested (by id or name), filter to it
+    if drive:
+        dnorm = (drive or "").strip().lower()
+        drives = [d for d in drives if d["id"] == drive or (d.get("name","").strip().lower() == dnorm)]
+        if not drives:
+            raise HTTPException(404, f"Drive '{drive}' not found on that site.")
+
+    # Order: default first, then others (or just the filtered one)
     ordered, seen = [], set()
     for d in drives:
         if d["id"] == default_drive_id and d["id"] not in seen:
@@ -341,7 +351,6 @@ def diag_list(site_url: str, path: str = ""):
             ordered.append(d); seen.add(d["id"])
 
     # normalize incoming path (handles %20 etc.)
-    from urllib.parse import unquote
     path = unquote(path).replace("\\", "/").strip()
 
     tried = []
@@ -350,10 +359,7 @@ def diag_list(site_url: str, path: str = ""):
     if path == "":
         for d in ordered:
             try:
-                r = gget(
-                    f"https://graph.microsoft.com/v1.0/drives/{d['id']}/root/children?$select=name,id,file",
-                    token
-                ).json()
+                r = gget(f"https://graph.microsoft.com/v1.0/drives/{d['id']}/root/children?$select=name,id,file", token).json()
                 kids = r.get("value", [])
                 return {
                     "driveName": d.get("name"),
@@ -384,4 +390,3 @@ def diag_list(site_url: str, path: str = ""):
                 tried.append({"drive": d.get("name"), "path": rel, "err": e.detail})
 
     return {"not_found": True, "tried": tried}
-
